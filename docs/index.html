@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>フォトモザイク</title>
+<style>
+:root { --bg:#f6f5f1; --card:#fff; --ink:#1f2328; --sub:#5f6670; --line:#d7d4cc; --btn:#1f6feb; --btn2:#2f3a48; --ok:#1a7f37; --warn:#b42318; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#15171a; --card:#1e2126; --ink:#e8eaed; --sub:#9aa0a6; --line:#3a3e45; --btn:#4c8dff; --btn2:#3a4656; --ok:#4cc26a; --warn:#ff6b5e; }
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI","Segoe UI",sans-serif; }
+main { max-width:720px; margin:0 auto; padding:16px 16px 48px; }
+h1 { font-size:1.35rem; margin:8px 0 4px; }
+p.lead { margin:0 0 12px; color:var(--sub); font-size:.92rem; line-height:1.6; }
+.card { background:var(--card); border-radius:12px; padding:14px; margin-top:12px; }
+.card h2 { font-size:1rem; margin:0 0 10px; }
+.row { display:flex; gap:8px; flex-wrap:wrap; }
+label.btn, button.btn { flex:1 1 140px; display:block; text-align:center; background:var(--btn); color:#fff; font-weight:700;
+  padding:13px 10px; border-radius:10px; font-size:1rem; cursor:pointer; border:0; }
+label.btn.sub, button.btn.sub { background:var(--btn2); }
+label.btn input { display:none; }
+button.btn:disabled { opacity:.4; }
+.info { color:var(--sub); font-size:.88rem; margin-top:8px; line-height:1.5; }
+#targetPrev { max-width:100%; max-height:220px; display:none; margin-top:10px; border-radius:8px; }
+#thumbs { display:grid; grid-template-columns:repeat(auto-fill, minmax(36px,1fr)); gap:3px; margin-top:10px; }
+#thumbs canvas { width:100%; aspect-ratio:1; border-radius:3px; display:block; }
+.slider { margin:12px 0 4px; }
+.slider label { display:flex; justify-content:space-between; font-size:.92rem; margin-bottom:4px; }
+.slider input { width:100%; }
+.slider small { color:var(--sub); font-size:.8rem; }
+#status { margin:14px 2px 0; min-height:1.4em; font-weight:600; line-height:1.5; }
+#status.ok { color:var(--ok); } #status.warn { color:var(--warn); }
+#viewWrap { overflow:auto; border-radius:8px; margin-top:10px; max-height:80vh; background:#000; }
+#view { display:block; width:100%; height:auto; }
+#viewWrap.zoom #view { width:auto; max-width:none; }
+.hidden { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>フォトモザイク</h1>
+  <p class="lead">たくさんの小さな写真を並べて、1 枚の大きな写真を描きます。
+    写真はこの端末の中だけで処理し、どこにも送りません。</p>
+
+  <div class="card">
+    <h2>① 元にする写真</h2>
+    <div class="row">
+      <label class="btn">写真を選ぶ<input id="target" type="file" accept="image/*"></label>
+      <label class="btn sub">カメラで撮る<input id="targetCam" type="file" accept="image/*" capture="environment"></label>
+      <label class="btn sub">自撮りする<input id="targetSelfie" type="file" accept="image/*" capture="user"></label>
+    </div>
+    <div class="info">顔の写真なら、横のマス数を 80 以上・色寄せを 30〜40% にすると目鼻がはっきり出ます。</div>
+    <img id="targetPrev" alt="元にする写真">
+  </div>
+
+  <div class="card">
+    <h2>② タイルにする写真（たくさん）</h2>
+    <div class="row">
+      <label class="btn">写真を選ぶ（複数）<input id="tiles" type="file" accept="image/*" multiple></label>
+      <label class="btn sub">カメラで撮って追加<input id="tileCam" type="file" accept="image/*" capture="environment"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn sub" id="selfTiles" disabled>元の写真を切ってタイルにする</button>
+      <button class="btn sub" id="clearTiles" disabled>タイルを全部消す</button>
+    </div>
+    <div class="info" id="tileInfo">まだありません。種類の違う写真が多いほどきれいになります（100 枚以上がおすすめ）。</div>
+    <div id="thumbs"></div>
+  </div>
+
+  <div class="card">
+    <h2>③ 作る</h2>
+    <div class="slider">
+      <label><span>横のマス数</span><b id="colsV">60</b></label>
+      <input id="cols" type="range" min="15" max="150" step="5" value="60">
+      <small>多いほど細かく元の絵が出ます。少ないとタイルの写真がよく見えます。</small>
+    </div>
+    <div class="slider">
+      <label><span>色寄せ</span><b id="blendV">25%</b></label>
+      <input id="blend" type="range" min="0" max="80" step="5" value="25">
+      <small>タイルの色をそのマスの色へ寄せる割合。0% で写真そのまま。</small>
+    </div>
+    <div class="slider">
+      <label><span>同じ写真の使い回しにくさ</span><b id="reuseV">15</b></label>
+      <input id="reuse" type="range" min="0" max="60" step="5" value="15">
+      <small>上げるといろいろな写真が使われ、下げると色の合う写真が何度も使われます。</small>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="make" disabled>モザイクを作る</button>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div class="card hidden" id="result">
+    <h2>できあがり</h2>
+    <div class="row">
+      <button class="btn sub" id="zoom">拡大して見る</button>
+      <button class="btn" id="save">画像を保存</button>
+    </div>
+    <div id="viewWrap"><canvas id="view"></canvas></div>
+    <div class="info">iPhone では「画像を保存」で開いた画像を長押しすると写真に保存できます。</div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const worker = new Worker('worker.js');
+const T = 64;                 // タイルの大きさ（photomosaic.h の TILE と同じ）
+const MAX_OUT = 4096;         // 出力の長辺の上限（iPhone の canvas の上限に合わせる）
+let ntiles = 0, haveTarget = false, targetCanvas = null, busy = false, built = false;
+
+function status(t, cls) { const s = $('status'); s.textContent = t; s.className = cls || ''; }
+function refresh() {
+  $('make').disabled = busy || !(ntiles > 0 && haveTarget);
+  $('selfTiles').disabled = busy || !haveTarget;
+  $('clearTiles').disabled = busy || ntiles === 0;
+  $('tileInfo').textContent = ntiles ? `タイル ${ntiles} 枚` : 'まだありません。種類の違う写真が多いほどきれいになります（100 枚以上がおすすめ）。';
+}
+
+async function decode(file) {
+  try { return await createImageBitmap(file); }
+  catch (e) {
+    const url = URL.createObjectURL(file);
+    try { return await new Promise((ok, ng) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ng; i.src = url; }); }
+    finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+  }
+}
+
+// 正方形に切り抜いて T x T に。縮小は 2 段階で（いきなり縮めると細かい模様がちらつく）
+function squareTile(src, sx, sy, s) {
+  let c = document.createElement('canvas');
+  let size = s, cur = src, cx = sx, cy = sy;
+  while (size > T * 2) {
+    const n = Math.max(T, Math.floor(size / 2));
+    const c2 = document.createElement('canvas'); c2.width = c2.height = n;
+    c2.getContext('2d').drawImage(cur, cx, cy, size, size, 0, 0, n, n);
+    cur = c2; cx = cy = 0; size = n;
+  }
+  c.width = c.height = T;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(cur, cx, cy, size, size, 0, 0, T, T);
+  return c;
+}
+
+function addThumb(c) {
+  if ($('thumbs').children.length >= 120) return;
+  const t = document.createElement('canvas'); t.width = t.height = 36;
+  t.getContext('2d').drawImage(c, 0, 0, 36, 36);
+  $('thumbs').appendChild(t);
+}
+
+async function addTileFiles(files) {
+  busy = true; refresh();
+  let batch = [], done = 0;
+  for (const f of files) {
+    try {
+      const img = await decode(f);
+      const s = Math.min(img.width, img.height);
+      const c = squareTile(img, (img.width - s) / 2, (img.height - s) / 2, s);
+      if (img.close) img.close();
+      addThumb(c);
+      batch.push(c.getContext('2d').getImageData(0, 0, T, T).data);
+    } catch (e) { /* 読めない写真は飛ばす */ }
+    done++;
+    if (batch.length >= 20) { worker.postMessage({ type: 'tiles', data: batch }); batch = []; }
+    status(`タイルを読み込み中… ${done} / ${files.length}`);
+  }
+  if (batch.length) worker.postMessage({ type: 'tiles', data: batch });
+  busy = false;
+  status(`タイルを ${done} 枚読み込みました`, 'ok');
+}
+
+async function setTarget(file) {
+  const img = await decode(file);
+  const sc = Math.min(1, 2048 / Math.max(img.width, img.height));   // 特徴を取るには 2048 で十分
+  const w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+  targetCanvas = document.createElement('canvas'); targetCanvas.width = w; targetCanvas.height = h;
+  const ctx = targetCanvas.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, w, h);
+  $('targetPrev').src = targetCanvas.toDataURL('image/jpeg', 0.8); $('targetPrev').style.display = 'block';
+  const rgba = ctx.getImageData(0, 0, w, h).data;
+  worker.postMessage({ type: 'target', rgba, w, h }, [rgba.buffer]);
+  haveTarget = true; built = false; refresh();
+}
+
+$('target').onchange = e => { if (e.target.files[0]) setTarget(e.target.files[0]); e.target.value = ''; };
+$('targetCam').onchange = e => { if (e.target.files[0]) setTarget(e.target.files[0]); e.target.value = ''; };
+$('targetSelfie').onchange = e => { if (e.target.files[0]) setTarget(e.target.files[0]); e.target.value = ''; };
+$('tiles').onchange = e => { if (e.target.files.length) addTileFiles([...e.target.files]); e.target.value = ''; };
+$('tileCam').onchange = e => { if (e.target.files.length) addTileFiles([...e.target.files]); e.target.value = ''; };
+$('clearTiles').onclick = () => { worker.postMessage({ type: 'reset' }); $('thumbs').innerHTML = ''; built = false; };
+
+// タイルが手元に無いときの代わり：元の写真をいろいろな位置・大きさで切り抜いてタイルにする
+$('selfTiles').onclick = () => {
+  const W = targetCanvas.width, H = targetCanvas.height, batch = [];
+  let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 150; i++) {
+    const s = Math.floor(Math.min(W, H) * (0.08 + 0.3 * rnd()));
+    const c = squareTile(targetCanvas, Math.floor(rnd() * (W - s)), Math.floor(rnd() * (H - s)), s);
+    addThumb(c);
+    batch.push(c.getContext('2d').getImageData(0, 0, T, T).data);
+  }
+  worker.postMessage({ type: 'tiles', data: batch });
+  status('元の写真から 150 枚のタイルを作りました', 'ok');
+};
+
+for (const [id, fmt] of [['cols', v => v], ['blend', v => v + '%'], ['reuse', v => v]]) {
+  $(id).oninput = () => { $(id + 'V').textContent = fmt($(id).value); };
+}
+$('blend').onchange = () => { if (built && !busy) { busy = true; refresh(); worker.postMessage({ type: 'render', cell: cellSize(), blend: $('blend').value / 100 }); } };
+
+function cellSize() {
+  const cols = +$('cols').value;
+  const rows = Math.max(1, Math.floor(targetCanvas.height / (targetCanvas.width / cols)));
+  return Math.max(8, Math.min(64, Math.floor(MAX_OUT / Math.max(cols, rows))));
+}
+
+$('make').onclick = () => {
+  busy = true; refresh();
+  status('タイルを選んで並べています…');
+  worker.postMessage({ type: 'build', cols: +$('cols').value, reuse: $('reuse').value / 100,
+                       cell: cellSize(), blend: $('blend').value / 100 });
+};
+
+worker.onmessage = e => {
+  const d = e.data;
+  if (d.type === 'count') { ntiles = d.n; refresh(); return; }
+  if (d.type === 'target_ok') return;
+  if (d.type === 'error') { busy = false; refresh(); status(d.msg, 'warn'); return; }
+  if (d.type === 'done') {
+    const v = $('view'); v.width = d.w; v.height = d.h;
+    v.getContext('2d').putImageData(new ImageData(d.rgba, d.w, d.h), 0, 0);
+    $('result').classList.remove('hidden');
+    busy = false; built = true; refresh();
+    const t = ((d.msBuild || 0) + d.msRender) / 1000;
+    status(`できました：${d.w}×${d.h} 画素、使った写真 ${d.distinct} 種類（${t.toFixed(1)} 秒）`, 'ok');
+  }
+};
+
+$('zoom').onclick = () => {
+  const z = $('viewWrap').classList.toggle('zoom');
+  $('zoom').textContent = z ? '全体を見る' : '拡大して見る';
+  if (z) { const w = $('viewWrap'); w.scrollLeft = (w.scrollWidth - w.clientWidth) / 2; w.scrollTop = (w.scrollHeight - w.clientHeight) / 2; }
+};
+$('save').onclick = () => {
+  $('view').toBlob(b => {
+    const url = URL.createObjectURL(b);
+    const a = document.createElement('a'); a.href = url; a.download = 'photomosaic.jpg';
+    if (/iPhone|iPad/.test(navigator.userAgent)) { a.removeAttribute('download'); a.target = '_blank'; }
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }, 'image/jpeg', 0.92);
+};
+refresh();
+</script>
+</body>
+</html>

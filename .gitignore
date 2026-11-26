@@ -1,0 +1,4 @@
+# 試験用の写真は picsum.photos から取ったもの（tools/fetch_testdata.py で取り直せる）。リポには入れない
+testdata/
+build/
+__pycache__/
