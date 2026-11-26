@@ -72,6 +72,7 @@ button.btn:disabled { opacity:.4; }
       <button class="btn sub" id="selfTiles" disabled>元の写真を切ってタイルにする</button>
       <button class="btn sub" id="clearTiles" disabled>タイルを全部消す</button>
     </div>
+    <div class="info">サンプルのボタンは今のタイルと入れ替え、写真を選ぶ・カメラ・元の写真を切るは追加です。</div>
     <div class="info" id="tileInfo">まだありません。種類の違う写真が多いほどきれいになります（100 枚以上がおすすめ）。</div>
     <div id="thumbs"></div>
   </div>
@@ -203,11 +204,15 @@ $('targetCam').onchange = e => { if (e.target.files[0]) setTarget(e.target.files
 $('targetSelfie').onchange = e => { if (e.target.files[0]) setTarget(e.target.files[0]); e.target.value = ''; };
 $('tiles').onchange = e => { if (e.target.files.length) addTileFiles([...e.target.files]); e.target.value = ''; };
 $('tileCam').onchange = e => { if (e.target.files.length) addTileFiles([...e.target.files]); e.target.value = ''; };
-$('clearTiles').onclick = () => { worker.postMessage({ type: 'reset' }); $('thumbs').innerHTML = ''; built = false; };
+function clearTiles() { worker.postMessage({ type: 'reset' }); $('thumbs').innerHTML = ''; built = false; }
+$('clearTiles').onclick = clearTiles;
 
 // サンプル：メトロポリタン美術館の Open Access（CC0）。samples/credits.json に出どころ
+// サンプルのタイル（名画・浮世絵）は今のタイルと入れ替える（押すたびに増えたり混ざったりしないように）。
+// 自分の写真・カメラ・元の写真の切り出しは追加
 $('sampleTiles').onclick = async () => {
   busy = true; refresh(); status('サンプルのタイルを読み込み中…');
+  clearTiles();
   try {
     const img = await decode(await (await fetch('samples/tiles.jpg')).blob());
     const cols = Math.floor(img.width / T), rows = Math.floor(img.height / T), batch = [];
@@ -240,10 +245,10 @@ function ukiyoeCrops(w, h, scales, overlap) {   // tools/ukiyoe_tiles.py の cro
 }
 $('ukiyoeTiles').onclick = async () => {
   busy = true; refresh(); status('浮世絵を読み込み中…');
+  clearTiles();
   try {
     const [meta, img] = await Promise.all([fetch('samples/ukiyoe.json').then(r => r.json()),
                                            fetch('samples/ukiyoe.jpg').then(r => r.blob()).then(decode)]);
-    const base = ntiles;   // 組の番号は他のタイルと混ざらなければよいので、今の枚数から始める
     let n = 0;
     for (let k = 0; k < meta.prints.length; k++) {
       const p = meta.prints[k], batch = [], groups = [];
@@ -254,7 +259,7 @@ $('ukiyoeTiles').onclick = async () => {
       for (const [l, t, s] of ukiyoeCrops(p.w, p.h, meta.crop.scales, meta.crop.overlap)) {
         const c = squareTile(img, p.x + l, p.y + t, s);
         batch.push(c.getContext('2d').getImageData(0, 0, T, T).data);
-        groups.push(base + k);
+        groups.push(k);
       }
       worker.postMessage({ type: 'tiles', data: batch, groups });
       n += batch.length;
