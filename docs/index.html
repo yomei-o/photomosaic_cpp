@@ -181,7 +181,7 @@ async function addTileFiles(files) {
     status(`タイルを読み込み中… ${done} / ${files.length}`);
   }
   if (batch.length) worker.postMessage({ type: 'tiles', data: batch });
-  busy = false;
+  busy = false; refresh();
   status(`タイルを ${done} 枚読み込みました`, 'ok');
 }
 
@@ -221,7 +221,7 @@ $('sampleTiles').onclick = async () => {
         batch.push(ctx.getImageData(k * T, r * T, T, T).data);
       }
     worker.postMessage({ type: 'tiles', data: batch });
-    busy = false; status(`サンプルのタイルを ${batch.length} 枚読み込みました（メトロポリタン美術館 Open Access・CC0）`, 'ok');
+    busy = false; refresh(); status(`サンプルのタイルを ${batch.length} 枚読み込みました（メトロポリタン美術館 Open Access・CC0）`, 'ok');
   } catch (e) { busy = false; refresh(); status('サンプルを読み込めませんでした', 'warn'); }
 };
 // 浮世絵：原画（余白を削って長辺 320 画素）を 1 枚にまとめた samples/ukiyoe.jpg から、大きさと位置を変えた
@@ -262,7 +262,7 @@ $('ukiyoeTiles').onclick = async () => {
     }
     $('blend').value = 20; $('lblend').value = 70;
     $('blendV').textContent = '20%'; $('lblendV').textContent = '70%';
-    busy = false;
+    busy = false; refresh();
     status(`浮世絵 ${meta.prints.length} 枚から ${n} 枚のタイルを切り出しました。色みの寄せ 20%・明るさの寄せ 70% にしました（メトロポリタン美術館 Open Access・CC0）`, 'ok');
   } catch (e) { busy = false; refresh(); status('浮世絵を読み込めませんでした', 'warn'); }
 };
