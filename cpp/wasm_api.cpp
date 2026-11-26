@@ -19,6 +19,11 @@ int pm_add_tile(const uint8_t* rgba) {   // TILE x TILE の RGBA
     g.add_tile(rgba, photomosaic::TILE, photomosaic::TILE);
     return (int)g.tiles.size();
 }
+// 同じ元の絵から切り出したタイルは同じ group（0 以上）。近くには組ごと置かない
+int pm_add_tile_group(const uint8_t* rgba, int group) {
+    g.add_tile(rgba, photomosaic::TILE, photomosaic::TILE, group);
+    return (int)g.tiles.size();
+}
 void pm_set_target(const uint8_t* rgba, int w, int h) { g.set_target(rgba, w, h); }
 
 // 戻り値: 縦のマス数（失敗は 0）
@@ -28,6 +33,19 @@ int pm_build(int cols, double reuse, int no_repeat, int seed, double blend, doub
     o.reuse = reuse; o.no_repeat = no_repeat; o.seed = (uint32_t)seed;
     o.blend = blend; o.lweight = lweight;
     return g.build(cols, o) ? g.rows : 0;
+}
+
+// 明るさの色寄せ lblend を別に持つ版（0 以上で Lab の寄せ。pm_render_lab で描く）
+int pm_build_lab(int cols, double reuse, int no_repeat, int seed, double blend, double lblend, double lweight) {
+    photomosaic::Options o;
+    o.reuse = reuse; o.no_repeat = no_repeat; o.seed = (uint32_t)seed;
+    o.blend = blend; o.lblend = lblend; o.lweight = lweight;
+    return g.build(cols, o) ? g.rows : 0;
+}
+uint8_t* pm_render_lab(int cell, double blend, double lblend) {
+    g.render_lab(cell, blend, lblend, g_out);
+    g_ow = g.cols * cell; g_oh = g.rows * cell;
+    return g_out.data();
 }
 
 // 戻り値: 出力 RGBA の先頭（幅 pm_out_w、高さ pm_out_h）

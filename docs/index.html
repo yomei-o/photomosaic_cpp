@@ -44,7 +44,7 @@ button.btn:disabled { opacity:.4; }
   <h1>フォトモザイク</h1>
   <p class="lead">たくさんの小さな写真を並べて、1 枚の大きな写真を描きます。
     写真はこの端末の中だけで処理し、どこにも送りません。
-    サンプル画像はメトロポリタン美術館の Open Access（CC0）です（<a href="samples/credits.json">出どころ一覧</a>）。</p>
+    サンプル画像はメトロポリタン美術館の Open Access（CC0）です（出どころ一覧：<a href="samples/credits.json">名画</a>・<a href="samples/ukiyoe.json">浮世絵</a>）。</p>
 
   <div class="card">
     <h2>① 元にする写真</h2>
@@ -67,6 +67,7 @@ button.btn:disabled { opacity:.4; }
       <label class="btn sub">カメラで撮って追加<input id="tileCam" type="file" accept="image/*" capture="environment"></label>
     </div>
     <div class="row" style="margin-top:8px">
+      <button class="btn sub" id="ukiyoeTiles">浮世絵のタイル（富嶽三十六景・東海道五十三次ほか）</button>
       <button class="btn sub" id="sampleTiles">サンプルのタイル（名画 300 枚）</button>
       <button class="btn sub" id="selfTiles" disabled>元の写真を切ってタイルにする</button>
       <button class="btn sub" id="clearTiles" disabled>タイルを全部消す</button>
@@ -83,9 +84,14 @@ button.btn:disabled { opacity:.4; }
       <small>多いほど細かく元の絵が出ます。少ないとタイルの写真がよく見えます。</small>
     </div>
     <div class="slider">
-      <label><span>色寄せ</span><b id="blendV">35%</b></label>
+      <label><span>色みの寄せ</span><b id="blendV">35%</b></label>
       <input id="blend" type="range" min="0" max="80" step="5" value="35">
-      <small>タイルの色をそのマスの色へ寄せる割合。0% で写真そのまま。寄せるぶん、タイルは色より明暗の形で選ばれます。</small>
+      <small>タイルの色合いをそのマスの色へ寄せる割合。0% で写真そのまま。寄せるぶん、タイルは色より明暗の形で選ばれます。</small>
+    </div>
+    <div class="slider">
+      <label><span>明るさの寄せ</span><b id="lblendV">35%</b></label>
+      <input id="lblend" type="range" min="0" max="100" step="5" value="35">
+      <small>タイルの明るさをマスへ寄せる割合。色の偏ったタイル（浮世絵など）は、明るさを強く・色みを弱く寄せると、陰影が出て色合いは残ります。</small>
     </div>
     <div class="slider">
       <label><span>同じ写真の使い回しにくさ</span><b id="reuseV">5</b></label>
@@ -218,6 +224,48 @@ $('sampleTiles').onclick = async () => {
     busy = false; status(`サンプルのタイルを ${batch.length} 枚読み込みました（メトロポリタン美術館 Open Access・CC0）`, 'ok');
   } catch (e) { busy = false; refresh(); status('サンプルを読み込めませんでした', 'warn'); }
 };
+// 浮世絵：原画（余白を削って長辺 320 画素）を 1 枚にまとめた samples/ukiyoe.jpg から、大きさと位置を変えた
+// 正方形を切り出す（1 枚の絵から数十枚）。同じ原画のタイルは組にして近くに置かない。
+// 浮世絵は色が偏っている（藍・紙の地・朱）ので、明るさを強く・色みを弱く寄せる（tools/ukiyoe_experiment.py）。
+function ukiyoeCrops(w, h, scales, overlap) {   // tools/ukiyoe_tiles.py の crops と同じ
+  const out = [];
+  for (const f of scales) {
+    const s = Math.min(w, h) * f, step = s * (1 - overlap);
+    const nx = Math.max(1, Math.ceil((w - s) / step - 1e-6) + 1), ny = Math.max(1, Math.ceil((h - s) / step - 1e-6) + 1);
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++)
+        out.push([nx === 1 ? 0 : (w - s) * i / (nx - 1), ny === 1 ? 0 : (h - s) * j / (ny - 1), s]);
+  }
+  return out;
+}
+$('ukiyoeTiles').onclick = async () => {
+  busy = true; refresh(); status('浮世絵を読み込み中…');
+  try {
+    const [meta, img] = await Promise.all([fetch('samples/ukiyoe.json').then(r => r.json()),
+                                           fetch('samples/ukiyoe.jpg').then(r => r.blob()).then(decode)]);
+    const base = ntiles;   // 組の番号は他のタイルと混ざらなければよいので、今の枚数から始める
+    let n = 0;
+    for (let k = 0; k < meta.prints.length; k++) {
+      const p = meta.prints[k], batch = [], groups = [];
+      const th = document.createElement('canvas'); th.width = th.height = T;
+      const s0 = Math.min(p.w, p.h);
+      th.getContext('2d').drawImage(img, p.x + (p.w - s0) / 2, p.y + (p.h - s0) / 2, s0, s0, 0, 0, T, T);
+      addThumb(th);
+      for (const [l, t, s] of ukiyoeCrops(p.w, p.h, meta.crop.scales, meta.crop.overlap)) {
+        const c = squareTile(img, p.x + l, p.y + t, s);
+        batch.push(c.getContext('2d').getImageData(0, 0, T, T).data);
+        groups.push(base + k);
+      }
+      worker.postMessage({ type: 'tiles', data: batch, groups });
+      n += batch.length;
+      if (k % 8 === 7) { status(`浮世絵を切り出し中… ${k + 1} / ${meta.prints.length} 枚`); await new Promise(r => setTimeout(r)); }
+    }
+    $('blend').value = 20; $('lblend').value = 70;
+    $('blendV').textContent = '20%'; $('lblendV').textContent = '70%';
+    busy = false;
+    status(`浮世絵 ${meta.prints.length} 枚から ${n} 枚のタイルを切り出しました。色みの寄せ 20%・明るさの寄せ 70% にしました（メトロポリタン美術館 Open Access・CC0）`, 'ok');
+  } catch (e) { busy = false; refresh(); status('浮世絵を読み込めませんでした', 'warn'); }
+};
 $('sampleTarget').onclick = async () => {
   const k = 1 + Math.floor(Math.random() * 3);
   try { await setTarget(await (await fetch(`samples/target_${k}.jpg`)).blob()); }
@@ -238,11 +286,12 @@ $('selfTiles').onclick = () => {
   status('元の写真から 150 枚のタイルを作りました', 'ok');
 };
 
-for (const [id, fmt] of [['cols', v => v], ['blend', v => v + '%'], ['reuse', v => v]]) {
+for (const [id, fmt] of [['cols', v => v], ['blend', v => v + '%'], ['lblend', v => v + '%'], ['reuse', v => v]]) {
   $(id).oninput = () => { $(id + 'V').textContent = fmt($(id).value); };
 }
 // 色寄せは照合にも使うので、変えたら並べ直す（1 秒かからない）
 $('blend').onchange = () => { if (built && !busy) $('make').onclick(); };
+$('lblend').onchange = () => { if (built && !busy) $('make').onclick(); };
 $('reuse').onchange = () => { if (built && !busy) $('make').onclick(); };
 
 function cellSize() {
@@ -255,7 +304,7 @@ $('make').onclick = () => {
   busy = true; refresh();
   status('タイルを選んで並べています…');
   worker.postMessage({ type: 'build', cols: +$('cols').value, reuse: $('reuse').value / 100,
-                       cell: cellSize(), blend: $('blend').value / 100, lweight: 2.0 });
+                       cell: cellSize(), blend: $('blend').value / 100, lblend: $('lblend').value / 100, lweight: 2.0 });
 };
 
 worker.onmessage = e => {

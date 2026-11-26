@@ -49,6 +49,63 @@ inline void linear_to_lab(double r, double g, double b, double lab[3]) {
     lab[2] = 200 * (fy - fz);
 }
 
+inline double lab_finv(double t) {
+    const double d = 6.0 / 29.0;
+    return t > d ? t * t * t : 3 * d * d * (t - 4.0 / 29.0);
+}
+
+inline double linear_to_srgb(double c) {
+    c = std::min(1.0, std::max(0.0, c));
+    return 255.0 * (c <= 0.0031308 ? 12.92 * c : 1.055 * std::pow(c, 1 / 2.4) - 0.055);
+}
+
+inline void lab_to_srgb(const double lab[3], double rgb[3]) {
+    double fy = (lab[0] + 16) / 116, fx = fy + lab[1] / 500, fz = fy - lab[2] / 200;
+    double X = lab_finv(fx) * 0.95047, Y = lab_finv(fy), Z = lab_finv(fz) * 1.08883;
+    rgb[0] = linear_to_srgb(3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z);
+    rgb[1] = linear_to_srgb(-0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z);
+    rgb[2] = linear_to_srgb(0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z);
+}
+
+// 描くとき（画素ごと）用の速い版：0..1 を LUTN 等分した表を線形補間で引く。誤差は sRGB で 0.2 階調以下
+static const int LUTN = 16384;
+inline double lut_lerp(const float* t, double v) {
+    v = std::min(1.0, std::max(0.0, v)) * LUTN;
+    int i = std::min(LUTN - 1, (int)v);
+    double f = v - i;
+    return t[i] + (t[i + 1] - t[i]) * f;
+}
+inline const float* lab_f_table() {
+    static float t[LUTN + 1];
+    static bool init = false;
+    if (!init) { for (int i = 0; i <= LUTN; i++) t[i] = (float)lab_f((double)i / LUTN); init = true; }
+    return t;
+}
+inline const float* srgb_table() {
+    static float t[LUTN + 1];
+    static bool init = false;
+    if (!init) { for (int i = 0; i <= LUTN; i++) t[i] = (float)linear_to_srgb((double)i / LUTN); init = true; }
+    return t;
+}
+inline void linear_to_lab_fast(double r, double g, double b, double lab[3]) {
+    const float* F = lab_f_table();
+    double X = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047;
+    double Y = (0.2126729 * r + 0.7151522 * g + 0.0721750 * b);
+    double Z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883;
+    double fx = lut_lerp(F, X), fy = lut_lerp(F, Y), fz = lut_lerp(F, Z);
+    lab[0] = 116 * fy - 16;
+    lab[1] = 500 * (fx - fy);
+    lab[2] = 200 * (fy - fz);
+}
+inline void lab_to_srgb_fast(const double lab[3], double rgb[3]) {
+    const float* S = srgb_table();
+    double fy = (lab[0] + 16) / 116, fx = fy + lab[1] / 500, fz = fy - lab[2] / 200;
+    double X = lab_finv(fx) * 0.95047, Y = lab_finv(fy), Z = lab_finv(fz) * 1.08883;
+    rgb[0] = lut_lerp(S, 3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z);
+    rgb[1] = lut_lerp(S, -0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z);
+    rgb[2] = lut_lerp(S, 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z);
+}
+
 // rgba 画像の矩形 [x0,x1)x[y0,y1) を SUB x SUB に区切った Lab 特徴と、全体の平均 RGB（sRGB 値）
 inline void features(const uint8_t* rgba, int w, double x0, double y0, double x1, double y1,
                      double feat[FDIM], double mean_rgb[3]) {
@@ -78,6 +135,7 @@ struct Tile {
     double feat[FDIM];
     double mean[3];              // 平均 RGB（sRGB 値、描くときの色寄せ用）
     double mlab[3];              // 9 か所の Lab の平均（照合用）
+    int group = -1;              // 同じ元の絵から切り出したタイルの組（近くに並べない）。-1 なら自分だけ
 };
 
 inline void mean_lab(const double* f, double m[3]) {
@@ -94,6 +152,10 @@ struct Options {
     // ずれ_k = (マス_k − タイル_k) − blend × (マス平均 − タイル平均)
     double blend = 0.0;
     double lweight = 2.0;    // 明るさ（L）の差の重み。a, b は 1
+    // 明るさだけの色寄せ（Lab の L）。負なら blend と同じ（sRGB で一緒に寄せる従来の描き方）。
+    // 0 以上なら Lab で寄せ、L は lblend、色み a, b は blend の割合。色の偏ったタイル（浮世絵など）で、
+    // 明暗は合わせつつタイルの色合いを残すため。描くときも render_lab に同じ値を渡す。
+    double lblend = -1.0;
 };
 
 struct Mosaic {
@@ -103,10 +165,13 @@ struct Mosaic {
     int cols = 0, rows = 0;
     std::vector<int> assign;            // rows*cols、タイル番号
     std::vector<double> cell_mean;      // rows*cols*3、マスの平均 RGB
+    std::vector<double> cell_lab;       // rows*cols*3、マスの 9 か所の Lab の平均
     std::vector<int> uses;
 
-    void add_tile(const uint8_t* rgba, int w, int h) {   // w == h == TILE を想定
+    // group: 同じ元の絵から切り出したタイルに同じ番号（0 以上）を付けると、近くには組ごと置かない
+    void add_tile(const uint8_t* rgba, int w, int h, int group = -1) {   // w == h == TILE を想定
         Tile t;
+        t.group = group;
         t.rgba.assign(rgba, rgba + (size_t)w * h * 4);
         features(rgba, w, 0, 0, w, h, t.feat, t.mean);
         mean_lab(t.feat, t.mlab);
@@ -143,7 +208,15 @@ struct Mosaic {
         }
         assign.assign(N, -1);
         uses.assign(T, 0);
-        std::vector<uint8_t> banned(T, 0);
+        // 禁止は組の単位。組の無いタイルは T + 番号を組とみなす
+        std::vector<int> gid(T);
+        int G = 0;
+        for (int t = 0; t < T; t++) G = std::max(G, tiles[t].group + 1);
+        for (int t = 0; t < T; t++) gid[t] = tiles[t].group >= 0 ? tiles[t].group : G + t;
+        std::vector<uint8_t> banned(G + T, 0);
+        cell_lab.assign((size_t)N * 3, 0);
+        for (int i = 0; i < N; i++) mean_lab(&cf[(size_t)i * FDIM], &cell_lab[(size_t)i * 3]);
+        const double bl[3] = {opt.lblend >= 0 ? opt.lblend : opt.blend, opt.blend, opt.blend};
         for (int idx : order) {
             int r = idx / cols, c = idx % cols;
             // 近くに置いたタイルは禁止
@@ -153,7 +226,7 @@ struct Mosaic {
                     int rr = r + dr, cc = c + dc;
                     if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) continue;
                     int a = assign[rr * cols + cc];
-                    if (a >= 0 && !banned[a]) { banned[a] = 1; near.push_back(a); }
+                    if (a >= 0 && !banned[gid[a]]) { banned[gid[a]] = 1; near.push_back(gid[a]); }
                 }
             const double* f = &cf[(size_t)idx * FDIM];
             double fm[3]; mean_lab(f, fm);
@@ -161,12 +234,12 @@ struct Mosaic {
             int best = -1; double bc = std::numeric_limits<double>::max();
             for (int pass = 0; pass < 2 && best < 0; pass++)     // タイルが少なくて全部禁止なら禁止を外す
                 for (int t = 0; t < T; t++) {
-                    if (pass == 0 && banned[t]) continue;
+                    if (pass == 0 && banned[gid[t]]) continue;
                     double d = 0;
                     const double* g = tiles[t].feat;
                     const double* gm = tiles[t].mlab;
                     double sh[3];
-                    for (int c = 0; c < 3; c++) sh[c] = opt.blend * (fm[c] - gm[c]);
+                    for (int c = 0; c < 3; c++) sh[c] = bl[c] * (fm[c] - gm[c]);
                     for (int k = 0; k < FDIM; k++) { double e = f[k] - g[k] - sh[k % 3]; d += wc[k % 3] * e * e; }
                     d *= 1.0 + opt.reuse * uses[t];
                     if (d < bc) { bc = d; best = t; }
@@ -205,6 +278,39 @@ struct Mosaic {
                             double v = acc[k] / n + sh[k];
                             o[k] = (uint8_t)std::min(255.0, std::max(0.0, std::round(v)));
                         }
+                        o[3] = 255;
+                    }
+                }
+            }
+    }
+
+    // Lab で色寄せして描く。タイルの各画素の L に lblend ×（マス − タイル）の L を、a, b に blend × の差を足す。
+    void render_lab(int cell, double blend, double lblend, std::vector<uint8_t>& out) const {
+        const int W = cols * cell, H = rows * cell;
+        out.assign((size_t)W * H * 4, 255);
+        const double* LT = lin_table();
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++) {
+                const Tile& t = tiles[assign[r * cols + c]];
+                const double* cm = &cell_lab[(size_t)(r * cols + c) * 3];
+                const double sh[3] = {lblend * (cm[0] - t.mlab[0]), blend * (cm[1] - t.mlab[1]), blend * (cm[2] - t.mlab[2])};
+                for (int y = 0; y < cell; y++) {
+                    int sy0 = y * TILE / cell, sy1 = std::max(sy0 + 1, (y + 1) * TILE / cell);
+                    for (int x = 0; x < cell; x++) {
+                        int sx0 = x * TILE / cell, sx1 = std::max(sx0 + 1, (x + 1) * TILE / cell);
+                        double acc[3] = {0, 0, 0}; int n = 0;
+                        for (int yy = sy0; yy < sy1; yy++)
+                            for (int xx = sx0; xx < sx1; xx++) {
+                                const uint8_t* p = &t.rgba[((size_t)yy * TILE + xx) * 4];
+                                acc[0] += LT[p[0]]; acc[1] += LT[p[1]]; acc[2] += LT[p[2]]; n++;
+                            }
+                        double lab[3], rgb[3];
+                        linear_to_lab_fast(acc[0] / n, acc[1] / n, acc[2] / n, lab);
+                        for (int k = 0; k < 3; k++) lab[k] += sh[k];
+                        lab[0] = std::min(100.0, std::max(0.0, lab[0]));
+                        lab_to_srgb_fast(lab, rgb);
+                        uint8_t* o = &out[((size_t)(r * cell + y) * W + c * cell + x) * 4];
+                        for (int k = 0; k < 3; k++) o[k] = (uint8_t)std::round(rgb[k]);
                         o[3] = 255;
                     }
                 }
