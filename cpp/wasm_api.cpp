@@ -22,9 +22,11 @@ int pm_add_tile(const uint8_t* rgba) {   // TILE x TILE の RGBA
 void pm_set_target(const uint8_t* rgba, int w, int h) { g.set_target(rgba, w, h); }
 
 // 戻り値: 縦のマス数（失敗は 0）
-int pm_build(int cols, double reuse, int no_repeat, int seed) {
+// blend: 色寄せ（照合をそれに合わせる）、lweight: 明るさの重み
+int pm_build(int cols, double reuse, int no_repeat, int seed, double blend, double lweight) {
     photomosaic::Options o;
     o.reuse = reuse; o.no_repeat = no_repeat; o.seed = (uint32_t)seed;
+    o.blend = blend; o.lweight = lweight;
     return g.build(cols, o) ? g.rows : 0;
 }
 

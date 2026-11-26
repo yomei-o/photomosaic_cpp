@@ -43,7 +43,8 @@ button.btn:disabled { opacity:.4; }
 <main>
   <h1>フォトモザイク</h1>
   <p class="lead">たくさんの小さな写真を並べて、1 枚の大きな写真を描きます。
-    写真はこの端末の中だけで処理し、どこにも送りません。</p>
+    写真はこの端末の中だけで処理し、どこにも送りません。
+    サンプル画像はメトロポリタン美術館の Open Access（CC0）です（<a href="samples/credits.json">出どころ一覧</a>）。</p>
 
   <div class="card">
     <h2>① 元にする写真</h2>
@@ -52,7 +53,10 @@ button.btn:disabled { opacity:.4; }
       <label class="btn sub">カメラで撮る<input id="targetCam" type="file" accept="image/*" capture="environment"></label>
       <label class="btn sub">自撮りする<input id="targetSelfie" type="file" accept="image/*" capture="user"></label>
     </div>
-    <div class="info">顔の写真なら、横のマス数を 80 以上・色寄せを 30〜40% にすると目鼻がはっきり出ます。</div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn sub" id="sampleTarget">サンプルの肖像画で試す</button>
+    </div>
+    <div class="info">顔の写真なら、横のマス数を 80 以上にすると目鼻がはっきり出ます。</div>
     <img id="targetPrev" alt="元にする写真">
   </div>
 
@@ -63,6 +67,7 @@ button.btn:disabled { opacity:.4; }
       <label class="btn sub">カメラで撮って追加<input id="tileCam" type="file" accept="image/*" capture="environment"></label>
     </div>
     <div class="row" style="margin-top:8px">
+      <button class="btn sub" id="sampleTiles">サンプルのタイル（名画 300 枚）</button>
       <button class="btn sub" id="selfTiles" disabled>元の写真を切ってタイルにする</button>
       <button class="btn sub" id="clearTiles" disabled>タイルを全部消す</button>
     </div>
@@ -78,13 +83,13 @@ button.btn:disabled { opacity:.4; }
       <small>多いほど細かく元の絵が出ます。少ないとタイルの写真がよく見えます。</small>
     </div>
     <div class="slider">
-      <label><span>色寄せ</span><b id="blendV">25%</b></label>
-      <input id="blend" type="range" min="0" max="80" step="5" value="25">
-      <small>タイルの色をそのマスの色へ寄せる割合。0% で写真そのまま。</small>
+      <label><span>色寄せ</span><b id="blendV">35%</b></label>
+      <input id="blend" type="range" min="0" max="80" step="5" value="35">
+      <small>タイルの色をそのマスの色へ寄せる割合。0% で写真そのまま。寄せるぶん、タイルは色より明暗の形で選ばれます。</small>
     </div>
     <div class="slider">
-      <label><span>同じ写真の使い回しにくさ</span><b id="reuseV">15</b></label>
-      <input id="reuse" type="range" min="0" max="60" step="5" value="15">
+      <label><span>同じ写真の使い回しにくさ</span><b id="reuseV">5</b></label>
+      <input id="reuse" type="range" min="0" max="30" step="1" value="5">
       <small>上げるといろいろな写真が使われ、下げると色の合う写真が何度も使われます。</small>
     </div>
     <div class="row" style="margin-top:12px">
@@ -120,7 +125,8 @@ function refresh() {
 }
 
 async function decode(file) {
-  try { return await createImageBitmap(file); }
+  // iPhone の写真は上下の向きが EXIF にあるので、必ず向きを反映させる
+  try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); }
   catch (e) {
     const url = URL.createObjectURL(file);
     try { return await new Promise((ok, ng) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ng; i.src = url; }); }
@@ -193,6 +199,31 @@ $('tiles').onchange = e => { if (e.target.files.length) addTileFiles([...e.targe
 $('tileCam').onchange = e => { if (e.target.files.length) addTileFiles([...e.target.files]); e.target.value = ''; };
 $('clearTiles').onclick = () => { worker.postMessage({ type: 'reset' }); $('thumbs').innerHTML = ''; built = false; };
 
+// サンプル：メトロポリタン美術館の Open Access（CC0）。samples/credits.json に出どころ
+$('sampleTiles').onclick = async () => {
+  busy = true; refresh(); status('サンプルのタイルを読み込み中…');
+  try {
+    const img = await decode(await (await fetch('samples/tiles.jpg')).blob());
+    const cols = Math.floor(img.width / T), rows = Math.floor(img.height / T), batch = [];
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+    for (let r = 0; r < rows; r++)
+      for (let k = 0; k < cols; k++) {
+        const t = document.createElement('canvas'); t.width = t.height = T;
+        t.getContext('2d').drawImage(c, k * T, r * T, T, T, 0, 0, T, T);
+        addThumb(t);
+        batch.push(ctx.getImageData(k * T, r * T, T, T).data);
+      }
+    worker.postMessage({ type: 'tiles', data: batch });
+    busy = false; status(`サンプルのタイルを ${batch.length} 枚読み込みました（メトロポリタン美術館 Open Access・CC0）`, 'ok');
+  } catch (e) { busy = false; refresh(); status('サンプルを読み込めませんでした', 'warn'); }
+};
+$('sampleTarget').onclick = async () => {
+  const k = 1 + Math.floor(Math.random() * 3);
+  try { await setTarget(await (await fetch(`samples/target_${k}.jpg`)).blob()); }
+  catch (e) { status('サンプルを読み込めませんでした', 'warn'); }
+};
+
 // タイルが手元に無いときの代わり：元の写真をいろいろな位置・大きさで切り抜いてタイルにする
 $('selfTiles').onclick = () => {
   const W = targetCanvas.width, H = targetCanvas.height, batch = [];
@@ -210,7 +241,9 @@ $('selfTiles').onclick = () => {
 for (const [id, fmt] of [['cols', v => v], ['blend', v => v + '%'], ['reuse', v => v]]) {
   $(id).oninput = () => { $(id + 'V').textContent = fmt($(id).value); };
 }
-$('blend').onchange = () => { if (built && !busy) { busy = true; refresh(); worker.postMessage({ type: 'render', cell: cellSize(), blend: $('blend').value / 100 }); } };
+// 色寄せは照合にも使うので、変えたら並べ直す（1 秒かからない）
+$('blend').onchange = () => { if (built && !busy) $('make').onclick(); };
+$('reuse').onchange = () => { if (built && !busy) $('make').onclick(); };
 
 function cellSize() {
   const cols = +$('cols').value;
@@ -222,7 +255,7 @@ $('make').onclick = () => {
   busy = true; refresh();
   status('タイルを選んで並べています…');
   worker.postMessage({ type: 'build', cols: +$('cols').value, reuse: $('reuse').value / 100,
-                       cell: cellSize(), blend: $('blend').value / 100 });
+                       cell: cellSize(), blend: $('blend').value / 100, lweight: 2.0 });
 };
 
 worker.onmessage = e => {

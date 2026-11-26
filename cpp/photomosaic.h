@@ -76,13 +76,24 @@ inline void features(const uint8_t* rgba, int w, double x0, double y0, double x1
 struct Tile {
     std::vector<uint8_t> rgba;   // TILE x TILE
     double feat[FDIM];
-    double mean[3];
+    double mean[3];              // 平均 RGB（sRGB 値、描くときの色寄せ用）
+    double mlab[3];              // 9 か所の Lab の平均（照合用）
 };
 
+inline void mean_lab(const double* f, double m[3]) {
+    m[0] = m[1] = m[2] = 0;
+    for (int k = 0; k < SUB * SUB; k++) for (int c = 0; c < 3; c++) m[c] += f[k * 3 + c];
+    for (int c = 0; c < 3; c++) m[c] /= SUB * SUB;
+}
+
 struct Options {
-    double reuse = 0.15;     // 使った回数 1 回ごとにコストを (1 + reuse) 倍
+    double reuse = 0.05;     // 使った回数 1 回ごとにコストを (1 + reuse) 倍（顔の実験で 0.02〜0.05 が良い）
     int no_repeat = 2;       // この距離（マス）以内には同じタイルを置かない
     uint32_t seed = 1;       // マスを埋める順番の乱数
+    // 照合を「色寄せした後に残るずれ」で行う。blend は描くときの色寄せと同じ値を渡す（0 なら素の比較）。
+    // ずれ_k = (マス_k − タイル_k) − blend × (マス平均 − タイル平均)
+    double blend = 0.0;
+    double lweight = 2.0;    // 明るさ（L）の差の重み。a, b は 1
 };
 
 struct Mosaic {
@@ -98,6 +109,7 @@ struct Mosaic {
         Tile t;
         t.rgba.assign(rgba, rgba + (size_t)w * h * 4);
         features(rgba, w, 0, 0, w, h, t.feat, t.mean);
+        mean_lab(t.feat, t.mlab);
         tiles.push_back(std::move(t));
     }
 
@@ -144,13 +156,18 @@ struct Mosaic {
                     if (a >= 0 && !banned[a]) { banned[a] = 1; near.push_back(a); }
                 }
             const double* f = &cf[(size_t)idx * FDIM];
+            double fm[3]; mean_lab(f, fm);
+            const double wc[3] = {opt.lweight, 1.0, 1.0};
             int best = -1; double bc = std::numeric_limits<double>::max();
             for (int pass = 0; pass < 2 && best < 0; pass++)     // タイルが少なくて全部禁止なら禁止を外す
                 for (int t = 0; t < T; t++) {
                     if (pass == 0 && banned[t]) continue;
                     double d = 0;
                     const double* g = tiles[t].feat;
-                    for (int k = 0; k < FDIM; k++) { double e = f[k] - g[k]; d += e * e; }
+                    const double* gm = tiles[t].mlab;
+                    double sh[3];
+                    for (int c = 0; c < 3; c++) sh[c] = opt.blend * (fm[c] - gm[c]);
+                    for (int k = 0; k < FDIM; k++) { double e = f[k] - g[k] - sh[k % 3]; d += wc[k % 3] * e * e; }
                     d *= 1.0 + opt.reuse * uses[t];
                     if (d < bc) { bc = d; best = t; }
                 }

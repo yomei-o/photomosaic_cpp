@@ -31,7 +31,7 @@ onmessage = async (e) => {
     postMessage({ type: 'target_ok' });
   } else if (d.type === 'build') {
     const t0 = performance.now();
-    const rows = M._pm_build(d.cols, d.reuse, 2, 1 + Math.floor(Math.random() * 1e6));
+    const rows = M._pm_build(d.cols, d.reuse, 2, 1 + Math.floor(Math.random() * 1e6), d.blend, d.lweight ?? 2.0);
     const msBuild = performance.now() - t0;
     if (!rows) { postMessage({ type: 'error', msg: 'タイルと元の写真の両方が必要です' }); return; }
     const r = render(d.cell, d.blend);

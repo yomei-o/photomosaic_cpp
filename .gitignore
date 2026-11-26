@@ -2,3 +2,8 @@
 testdata/
 build/
 __pycache__/
+# 直下に置いた写真（個人の写真など）は入れない
+/*.jpg
+/*.jpeg
+/*.png
+/*.heic
