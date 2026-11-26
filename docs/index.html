@@ -37,6 +37,12 @@ button.btn:disabled { opacity:.4; }
 #view { display:block; width:100%; height:auto; }
 #viewWrap.zoom #view { width:auto; max-width:none; }
 .hidden { display:none !important; }
+/* PC 用のカメラ画面（スマホは input の capture で OS のカメラが開く） */
+#camBox { position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:10; display:flex; flex-direction:column;
+          align-items:center; justify-content:center; padding:16px; gap:12px; }
+#camBox video { max-width:100%; max-height:70vh; border-radius:10px; background:#000; }
+#camBox .row { width:100%; max-width:640px; }
+#camMsg { color:#fff; font-size:.92rem; min-height:1.3em; text-align:center; }
 </style>
 </head>
 <body>
@@ -45,6 +51,15 @@ button.btn:disabled { opacity:.4; }
   <p class="lead">たくさんの小さな写真を並べて、1 枚の大きな写真を描きます。
     写真はこの端末の中だけで処理し、どこにも送りません。
     サンプル画像はメトロポリタン美術館の Open Access（CC0）です（出どころ一覧：<a href="samples/credits.json">名画</a>・<a href="samples/ukiyoe.json">浮世絵</a>）。</p>
+
+  <div id="camBox" class="hidden">
+    <video id="camVideo" playsinline muted></video>
+    <div id="camMsg"></div>
+    <div class="row">
+      <button class="btn" id="camShot">撮る</button>
+      <button class="btn sub" id="camClose">閉じる</button>
+    </div>
+  </div>
 
   <div class="card">
     <h2>① 元にする写真</h2>
@@ -204,6 +219,67 @@ $('targetCam').onchange = e => { if (e.target.files[0]) setTarget(e.target.files
 $('targetSelfie').onchange = e => { if (e.target.files[0]) setTarget(e.target.files[0]); e.target.value = ''; };
 $('tiles').onchange = e => { if (e.target.files.length) addTileFiles([...e.target.files]); e.target.value = ''; };
 $('tileCam').onchange = e => { if (e.target.files.length) addTileFiles([...e.target.files]); e.target.value = ''; };
+
+// ---- PC ではカメラをページの中で開く
+// capture 属性が効くのはスマホのブラウザだけで、PC では普通のファイル選択になってしまう。
+// PC（スマホ・タブレット以外）で getUserMedia が使えるときは、input のクリックを止めて自前のカメラ画面を出す。
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+                 (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // iPadOS は Mac を名乗る
+const pcCamera = !isMobile && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+let camStream = null, camMode = null, camShots = 0;
+
+async function openCam(mode) {   // mode: 'target' | 'selfie' | 'tile'
+  camMode = mode; camShots = 0;
+  $('camMsg').textContent = 'カメラを起動しています…';
+  $('camBox').classList.remove('hidden');
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: mode === 'selfie' ? 'user' : 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false });
+  } catch (err) {
+    $('camMsg').textContent = err.name === 'NotAllowedError'
+      ? 'カメラの使用が許可されませんでした。アドレスバーのカメラのアイコンから許可してください。'
+      : err.name === 'NotFoundError' ? 'カメラが見つかりませんでした。' : 'カメラを開けませんでした: ' + err.message;
+    return;
+  }
+  const v = $('camVideo');
+  v.srcObject = camStream;
+  // 前向きのカメラは鏡にして見せる（撮った写真は鏡にしない）。PC の内蔵カメラは facingMode を
+  // 返さないことが多いが、ほぼ前向きなので、後ろ向きと分かるとき以外は鏡にする
+  const s = camStream.getVideoTracks()[0].getSettings();
+  v.style.transform = s.facingMode === 'environment' ? '' : 'scaleX(-1)';
+  await v.play();
+  $('camMsg').textContent = mode === 'tile' ? '「撮る」を押すたびにタイルに追加します。' : '';
+}
+
+function closeCam() {
+  if (camStream) camStream.getTracks().forEach(t => t.stop());
+  camStream = null; $('camVideo').srcObject = null;
+  $('camBox').classList.add('hidden');
+}
+
+$('camShot').onclick = () => {
+  const v = $('camVideo');
+  if (!camStream || !v.videoWidth) return;
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  c.toBlob(blob => {
+    if (!blob) return;
+    if (camMode === 'tile') {
+      camShots++; $('camMsg').textContent = `${camShots} 枚追加しました。続けて撮れます。`;
+      addTileFiles([blob]);
+    } else {
+      closeCam(); setTarget(blob);
+    }
+  }, 'image/jpeg', 0.92);
+};
+$('camClose').onclick = closeCam;
+
+if (pcCamera) {
+  for (const [id, mode] of [['targetCam', 'target'], ['targetSelfie', 'selfie'], ['tileCam', 'tile']]) {
+    $(id).addEventListener('click', e => { e.preventDefault(); openCam(mode); });
+  }
+}
 function clearTiles() { worker.postMessage({ type: 'reset' }); $('thumbs').innerHTML = ''; built = false; }
 $('clearTiles').onclick = clearTiles;
 
